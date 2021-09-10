@@ -1,0 +1,63 @@
+    DATA lt_item TYPE zvdr_t_item1.
+    DATA lt_changed_fields_produkts TYPE /bobf/t_frw_name.
+    DATA lt_item_key_mci TYPE /bobf/t_frw_key.
+
+    io_read->retrieve_by_association(
+        EXPORTING
+          iv_node                 = zif_vdr_tor_bo_c=>sc_node-root    " Node Name
+          it_key                  = it_key                " Key Table
+          iv_association          = zif_vdr_tor_bo_c=>sc_association-root-item " Name of Association
+          iv_fill_data            = abap_true
+       IMPORTING
+         et_data                 = lt_item                 " Data Return Structure
+      ).
+
+    DATA lt_queue TYPE zvdr_t_item1.
+    DATA ls_queue LIKE LINE OF lt_queue.
+    DATA lr_queue LIKE REF TO ls_queue.
+    DATA lt_update TYPE zvdr_t_item1.
+
+    INSERT zif_vdr_tor_bo_c=>sc_node_attribute-item-mci INTO TABLE lt_changed_fields_produkts .
+
+    LOOP AT lt_item ASSIGNING FIELD-SYMBOL(<ls_item>)
+      WHERE item_parent_key = '00000000000000000000000000000000'.
+      INSERT <ls_item> INTO TABLE lt_queue.
+    ENDLOOP.
+
+    WHILE lt_queue IS NOT INITIAL.
+
+      LOOP AT lt_queue REFERENCE INTO lr_queue.
+        IF ( lr_queue->item_cat = 'PKG' OR lr_queue->item_cat = 'PRD' ) AND lr_queue->ref_item_key IS NOT INITIAL . "Check for MCI conditions
+          lr_queue->mci = 'X'.
+          INSERT VALUE #( key = lr_queue->key ) INTO TABLE lt_item_key_mci.
+          io_modify->update(
+            EXPORTING
+              iv_node           = zif_vdr_tor_bo_c=>sc_node-item
+              iv_key            = lr_queue->key
+              is_data           = lr_queue
+              it_changed_fields = lt_changed_fields_produkts ).
+        ELSE. " If conditions MCI do not pass
+          LOOP AT lt_item ASSIGNING FIELD-SYMBOL(<ls_item_upd>)
+             WHERE item_parent_key = lr_queue->key.
+            INSERT <ls_item_upd> INTO TABLE lt_update.
+          ENDLOOP.
+        ENDIF.
+      ENDLOOP.
+
+      lt_queue = lt_update.
+      CLEAR lt_update.
+
+    ENDWHILE.
+
+    LOOP AT lt_item REFERENCE INTO lr_queue.
+      READ TABLE lt_item_key_mci WITH TABLE KEY key = lr_queue->key ASSIGNING FIELD-SYMBOL(<ls_item_key_mci>).
+      IF sy-subrc <> 0 .
+        lr_queue->mci = ' '.
+        io_modify->update(
+          EXPORTING
+            iv_node           = zif_vdr_tor_bo_c=>sc_node-item
+            iv_key            = lr_queue->key
+            is_data           = lr_queue
+            it_changed_fields = lt_changed_fields_produkts ).
+      ENDIF.
+    ENDLOOP.
